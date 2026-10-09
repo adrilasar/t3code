@@ -23,6 +23,7 @@ import { browserCommand } from "./browser.ts";
 
 const runSetup = (input: {
   readonly font: string | undefined;
+  readonly fontAfterInstall?: string;
   readonly root?: boolean;
   readonly apt?: boolean;
   readonly installedBrowser?: boolean;
@@ -30,12 +31,16 @@ const runSetup = (input: {
   readonly platform?: NodeJS.Platform;
 }) => {
   const commands: Array<ReadonlyArray<string>> = [];
+  let font = input.font;
   const browser = "/t3/tools/chrome-headless-shell/linux64/154/chrome-headless-shell";
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       if (!ChildProcess.isStandardCommand(command)) return yield* Effect.die("Unexpected pipeline");
       commands.push([command.command, ...command.args]);
-      if (command.command === "fc-match" && input.font === undefined) {
+      if (command.command === "apt-get" && command.args.includes("fonts-liberation")) {
+        font = input.fontAfterInstall ?? "/usr/share/fonts/liberation/LiberationSans-Regular.ttf";
+      }
+      if (command.command === "fc-match" && font === undefined) {
         return yield* PlatformError.systemError({
           _tag: "NotFound",
           module: "ChildProcess",
@@ -44,7 +49,7 @@ const runSetup = (input: {
       }
       const output =
         command.command === "fc-match"
-          ? (input.font ?? "")
+          ? (font ?? "")
           : command.command === browser && input.missingLibraries
             ? "error while loading shared libraries: libnss3.so: cannot open shared object file"
             : command.command === "ldd"
@@ -131,6 +136,17 @@ describe("t3 browser setup fonts", () => {
       });
       expect(commands.some(([name]) => name === "apt-get")).toBe(false);
       expect(output).toContain("This host is ready");
+    }),
+  );
+
+  it.effect("does not report ready when fonts remain unavailable after installation", () =>
+    Effect.gen(function* () {
+      const { commands, output } = yield* runSetup({ font: "", fontAfterInstall: "", root: true });
+      expect(commands.some(([name, action]) => name === "apt-get" && action === "install")).toBe(
+        true,
+      );
+      expect(output).toContain("Check its configuration");
+      expect(output).not.toContain("This host is ready");
     }),
   );
 

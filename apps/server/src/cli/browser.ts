@@ -123,15 +123,18 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         : [];
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Chrome can start without fonts, but pages then render without text.
-      const font = yield* spawner
+      const fontAvailable = spawner
         .string(
           ChildProcess.make("fc-match", ["--format=%{file}", "sans-serif"], {
             stdin: "ignore",
             stderr: "ignore",
           }),
         )
-        .pipe(Effect.orElseSucceed(() => ""));
-      const needsFonts = font.trim() === "";
+        .pipe(
+          Effect.map((font) => font.trim() !== ""),
+          Effect.orElseSucceed(() => false),
+        );
+      const needsFonts = !(yield* fontAvailable);
       const hasApt = yield* fs.exists("/usr/bin/apt-get").pipe(Effect.orElseSucceed(() => false));
 
       if (!needsProfile && missing.length === 0 && !needsFonts) {
@@ -216,6 +219,11 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
           "fontconfig",
           "fonts-liberation",
         ]);
+        if (!(yield* fontAvailable)) {
+          return yield* Console.log(
+            "Font packages are installed, but Fontconfig still finds no system font. Check its configuration and run setup again.",
+          );
+        }
         yield* Console.log(
           "Installed the browser's fonts. Restart the T3 server if browser tabs were already open.",
         );
