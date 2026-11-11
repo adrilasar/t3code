@@ -178,6 +178,24 @@ describe("HTML render model context", () => {
     reply(htmlRenderResult(request!.id));
     await write;
 
+    const sent = messages.length;
+    const first: Promise<void> = NodeVM.runInContext(
+      'window.t3.updateModelContext({value:"first"})',
+      context,
+    );
+    const firstRequest = readHtmlRenderModelContextRequest(messages.at(-1))!;
+    const second: Promise<void> = NodeVM.runInContext(
+      'window.t3.updateModelContext({value:"second"})',
+      context,
+    );
+    expect(messages).toHaveLength(sent + 1);
+    reply(htmlRenderResult(firstRequest.id));
+    await first;
+    const secondRequest = readHtmlRenderModelContextRequest(messages.at(-1))!;
+    expect(secondRequest.context).toEqual({ structuredContent: { value: "second" } });
+    reply(htmlRenderResult(secondRequest.id));
+    await second;
+
     const clear: Promise<void> = NodeVM.runInContext("window.t3.updateModelContext(null)", context);
     const cleared = readHtmlRenderModelContextRequest(messages.at(-1));
     expect(cleared?.context).toEqual({});
@@ -193,6 +211,17 @@ describe("HTML render model context", () => {
       NodeVM.runInContext('window.t3.updateModelContext({value:"表".repeat(6000)})', context),
     ).rejects.toThrow("too large");
     expect(messages).toHaveLength(before);
+
+    NodeVM.runInContext(/<script>([\s\S]*?)<\/script>/.exec(html)![1]!, context);
+    const restarted: Promise<void> = NodeVM.runInContext(
+      'window.t3.updateModelContext({value:"new document"})',
+      context,
+    );
+    const restartedRequest = readHtmlRenderModelContextRequest(messages.at(-1))!;
+    const saved = expect(restarted).resolves.toBeUndefined();
+    reply(htmlRenderResult(request!.id, "Reply from the old document"));
+    reply(htmlRenderResult(restartedRequest.id));
+    await saved;
   });
 
   it("rejects malformed requests and accepts only explicit context updates", () => {

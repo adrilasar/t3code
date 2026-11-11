@@ -274,26 +274,37 @@ export function readHtmlRenderModelContextRequest(data: unknown) {
 }
 
 const MODEL_CONTEXT_SCRIPT = `(function(){
-var pending=new Map(),next=0;
+var pending=null,queue=[],next=0,prefix="t3-context-"+Math.random().toString(36).slice(2)+"-";
+function complete(error){
+  var p=pending;pending=null;clearTimeout(p.timer);
+  if(error)p.reject(error);else p.resolve();
+  send();
+}
+function send(){
+  if(pending||!queue.length)return;
+  var p=pending=queue.shift();
+  p.timer=setTimeout(function(){complete(new Error("Context update timed out."));},10000);
+  try{
+    if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(p.message);
+    else window.parent.postMessage(JSON.parse(p.message),"*");
+  }catch(e){complete(e);}
+}
 window.t3={updateModelContext:function(state){
   return new Promise(function(resolve,reject){
     if(state!==null&&(typeof state!=="object"||Array.isArray(state)))return reject(new Error("State must be an object or null."));
-    if(pending.size>=16)return reject(new Error("Too many pending context updates."));
-    var id="t3-context-"+(++next),message;
+    if(queue.length+(pending?1:0)>=16)return reject(new Error("Too many pending context updates."));
+    var id=prefix+(++next),message;
     try{message=JSON.stringify({jsonrpc:"2.0",id:id,method:"ui/update-model-context",params:state===null?{}:{structuredContent:state}});}catch(e){reject(e);return;}
     if(new TextEncoder().encode(message).length>16384)return reject(new Error("Model context is too large."));
-    var timer=setTimeout(function(){pending.delete(id);reject(new Error("Context update timed out."));},10000);
-    pending.set(id,{resolve:resolve,reject:reject,timer:timer});
-    if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(message);
-    else window.parent.postMessage(JSON.parse(message),"*");
+    queue.push({id:id,message:message,resolve:resolve,reject:reject});
+    send();
   });
 }};
 window.addEventListener("message",function(e){
   if(window.parent!==window&&e.source!==window.parent)return;
-  var d=e.data,p=d&&d.jsonrpc==="2.0"&&pending.get(d.id);
-  if(!p||(!d.error&&!("result" in d)))return;
-  pending.delete(d.id);clearTimeout(p.timer);
-  if(d.error)p.reject(new Error(d.error.message));else p.resolve();
+  var d=e.data;
+  if(!pending||!d||d.jsonrpc!=="2.0"||d.id!==pending.id||(!d.error&&!("result" in d)))return;
+  complete(d.error?new Error(d.error.message):undefined);
 });
 })();`;
 

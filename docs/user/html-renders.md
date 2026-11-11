@@ -10,12 +10,9 @@ Before publishing, agents check their work with screenshots from a small headles
 
 Previews can load public resources such as CDN scripts, but nothing on your local network. The machine running the environment looks up each name, and previews block names that resolve to private or reserved addresses. Clash or Mihomo in fake-IP DNS mode can return these addresses, so external resources can fail there. The preview's console messages can identify affected hostnames. Inline the resource, add its host to `fake-ip-filter`, or switch that machine's proxy DNS to `redir-host`.
 
-Generated pages can share form answers or other state with the agent using
-`await window.t3.updateModelContext({ name: "Ada", choices: ["a", "b"] })`.
-The latest state is saved with the conversation and included in the agent's next turn;
-it does not send a message or start a turn. Await the call before showing that answers
-were saved. Pass `null` to clear the context. Updates are limited to 16 KiB.
-Reloading a page does not restore its inputs.
+Pages can publish JSON context with `await window.t3.updateModelContext(state)`.
+The latest value is included in the agent's next turn; `null` clears it.
+The promise resolves after saving. Context is limited to 16 KiB.
 
 ## MCP apps
 
