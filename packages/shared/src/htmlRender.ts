@@ -248,6 +248,13 @@ export interface HtmlRenderModelContextTarget {
 }
 
 export function readHtmlRenderModelContextRequest(data: unknown) {
+  if (typeof data === "string") {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      return undefined;
+    }
+  }
   if (typeof data !== "object" || data === null) return undefined;
   const { jsonrpc, method, id, params } = data as Record<string, unknown>;
   if (jsonrpc !== "2.0" || method !== "ui/update-model-context") return undefined;
@@ -271,6 +278,22 @@ export function readHtmlRenderModelContextRequest(data: unknown) {
         : { structuredContent: structuredContent as Record<string, unknown> }),
     },
   };
+}
+
+export type HtmlRenderModelContext = Pick<
+  McpAppUpdateModelContextInput,
+  "content" | "structuredContent"
+>;
+
+export async function handleHtmlRenderModelContextRequest(
+  message: unknown,
+  update: (context: HtmlRenderModelContext) => Promise<boolean>,
+  reply: (response: ReturnType<typeof htmlRenderResult>) => void,
+) {
+  const request = readHtmlRenderModelContextRequest(message);
+  if (request === undefined) return;
+  const saved = await update(request.context);
+  reply(htmlRenderResult(request.id, saved ? undefined : "Context could not be saved."));
 }
 
 const MODEL_CONTEXT_SCRIPT = `(function(){

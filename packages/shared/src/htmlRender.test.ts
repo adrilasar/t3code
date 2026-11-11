@@ -7,6 +7,7 @@ import {
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
   readHtmlRenderModelContextRequest,
+  handleHtmlRenderModelContextRequest,
   htmlRenderResult,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
@@ -141,8 +142,7 @@ describe("HTML render model context", () => {
   it.each(["web", "mobile"])("acknowledges context writes over the %s bridge", async (platform) => {
     const messages: unknown[] = [];
     const listeners: Array<(event: { data: unknown; source: unknown }) => void> = [];
-    const postMessage = (data: unknown) =>
-      messages.push(typeof data === "string" ? JSON.parse(data) : data);
+    const postMessage = (data: unknown) => messages.push(data);
     const parent = { postMessage };
     const window = {
       parent: platform === "web" ? parent : (null as unknown),
@@ -164,20 +164,11 @@ describe("HTML render model context", () => {
     });
     const html = injectHtmlRenderBootstrap("<input name=name>");
     NodeVM.runInContext(/<script>([\s\S]*?)<\/script>/.exec(html)![1]!, context);
-    const write: Promise<void> = NodeVM.runInContext(
-      'window.t3.updateModelContext({name:"Ada"})',
-      context,
-    );
-    const request = readHtmlRenderModelContextRequest(messages.at(-1));
-    expect(request?.context).toEqual({ structuredContent: { name: "Ada" } });
     const reply = (data: unknown, source: unknown = window.parent) => {
       for (const listener of listeners) listener({ data, source });
     };
-    // A response from another window must not consume the outstanding request.
-    if (platform === "web") reply(htmlRenderResult(request!.id, "forged"), {});
-    reply(htmlRenderResult(request!.id));
-    await write;
-
+    const respond = (message: unknown, saved = true) =>
+      handleHtmlRenderModelContextRequest(message, async () => saved, reply);
     const sent = messages.length;
     const first: Promise<void> = NodeVM.runInContext(
       'window.t3.updateModelContext({value:"first"})',
@@ -189,18 +180,19 @@ describe("HTML render model context", () => {
       context,
     );
     expect(messages).toHaveLength(sent + 1);
-    reply(htmlRenderResult(firstRequest.id));
+    if (platform === "web") reply(htmlRenderResult(firstRequest.id, "forged"), {});
+    await respond(messages.at(-1));
     await first;
     const secondRequest = readHtmlRenderModelContextRequest(messages.at(-1))!;
     expect(secondRequest.context).toEqual({ structuredContent: { value: "second" } });
-    reply(htmlRenderResult(secondRequest.id));
+    await respond(messages.at(-1));
     await second;
 
     const clear: Promise<void> = NodeVM.runInContext("window.t3.updateModelContext(null)", context);
     const cleared = readHtmlRenderModelContextRequest(messages.at(-1));
     expect(cleared?.context).toEqual({});
-    const rejected = expect(clear).rejects.toThrow("Save failed");
-    reply(htmlRenderResult(cleared!.id, "Save failed"));
+    const rejected = expect(clear).rejects.toThrow("Context could not be saved");
+    await respond(messages.at(-1), false);
     await rejected;
 
     const before = messages.length;
@@ -217,10 +209,9 @@ describe("HTML render model context", () => {
       'window.t3.updateModelContext({value:"new document"})',
       context,
     );
-    const restartedRequest = readHtmlRenderModelContextRequest(messages.at(-1))!;
     const saved = expect(restarted).resolves.toBeUndefined();
-    reply(htmlRenderResult(request!.id, "Reply from the old document"));
-    reply(htmlRenderResult(restartedRequest.id));
+    reply(htmlRenderResult(firstRequest.id, "Reply from the old document"));
+    await respond(messages.at(-1));
     await saved;
   });
 

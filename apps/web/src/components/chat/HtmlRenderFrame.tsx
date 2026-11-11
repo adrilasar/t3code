@@ -3,10 +3,10 @@ import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
   htmlRenderFrameHeight,
-  htmlRenderResult,
-  readHtmlRenderModelContextRequest,
+  handleHtmlRenderModelContextRequest,
   type HtmlRenderReference,
   type HtmlRenderModelContextTarget,
+  type HtmlRenderModelContext,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -36,23 +36,14 @@ export function HtmlRenderFrame(props: {
   const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
     reportFailure: false,
   });
-  const onMessage: HtmlRenderMessageHandler = (message, reply) => {
-    const request = readHtmlRenderModelContextRequest(message);
-    if (request === undefined) return;
+  const publishContext = async (context: HtmlRenderModelContext) => {
     const target = props.modelContextTarget;
-    if (target === undefined) {
-      reply(htmlRenderResult(request.id, "This page cannot share context."));
-      return;
-    }
-    void updateModelContext({ ...target, input: { ...target.input, ...request.context } }).then(
-      (result) =>
-        reply(
-          htmlRenderResult(
-            request.id,
-            result._tag === "Success" ? undefined : "Context could not be saved.",
-          ),
-        ),
-    );
+    if (target === undefined) return false;
+    const result = await updateModelContext({ ...target, input: { ...target.input, ...context } });
+    return result._tag === "Success";
+  };
+  const onMessage: HtmlRenderMessageHandler = (message, reply) => {
+    void handleHtmlRenderModelContextRequest(message, publishContext, reply);
   };
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   const observeBox = (box: HTMLDivElement) => {

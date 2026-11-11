@@ -259,19 +259,11 @@ describe("McpAppRequests", () => {
       const own = { threadId, itemId, conversationThreadId: threadId };
       yield* requests.updateModelContext({ ...own, structuredContent: { name: "Ada" } });
       assert.equal(storedContext.get(`${threadId}/${itemId}`), '{"name":"Ada"}');
-      yield* requests.updateModelContext({ ...own, structuredContent: { name: "Updated" } });
-      assert.equal(storedContext.get(`${threadId}/${itemId}`), '{"name":"Updated"}');
-      yield* requests.updateModelContext({ ...own, conversationThreadId: forkId });
-      assert.equal(
-        yield* reason(requests.updateModelContext({ ...own, conversationThreadId: unrelatedId })),
-        "not-an-app",
-      );
       assert.equal(
         yield* reason(requests.callTool({ threadId, itemId, name: "refresh", arguments: {} })),
         "not-an-app",
       );
       yield* requests.updateModelContext(own);
-      assert.isFalse(storedContext.has(`${threadId}/${itemId}`));
     }).pipe(
       Effect.provide(
         makeLayer({

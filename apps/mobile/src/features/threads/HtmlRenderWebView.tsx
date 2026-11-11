@@ -3,9 +3,9 @@ import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   htmlRenderFileName,
-  htmlRenderResult,
-  readHtmlRenderModelContextRequest,
+  handleHtmlRenderModelContextRequest,
   type HtmlRenderModelContextTarget,
+  type HtmlRenderModelContext,
   htmlRenderFrameHeight,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
@@ -95,6 +95,16 @@ export function HtmlRenderWebView(props: {
   const [loaded, setLoaded] = useState(false);
   const [overflow, setOverflow] = useState(NO_OVERFLOW);
   const webView = useRef<WebView<object>>(null);
+  const publishContext = async (context: HtmlRenderModelContext) => {
+    const target = props.modelContextTarget;
+    if (target === undefined) return false;
+    const result = await updateModelContext({ ...target, input: { ...target.input, ...context } });
+    return result._tag === "Success";
+  };
+  const reply = (response: unknown) =>
+    webView.current?.injectJavaScript(
+      `window.postMessage(${JSON.stringify(response)}, "*"); true;`,
+    );
   const crashes = useRef(0);
   const shownTheme = useRef<HtmlRenderTheme | null>(null);
   const source = { uri: props.uri + htmlRenderThemeFragment(initialTheme) };
@@ -168,29 +178,7 @@ export function HtmlRenderWebView(props: {
             setOverflow(next);
             return;
           }
-          let message: unknown;
-          try {
-            message = JSON.parse(event.nativeEvent.data);
-          } catch {
-            return;
-          }
-          const context = readHtmlRenderModelContextRequest(message);
-          if (context === undefined) return;
-          const reply = (error?: string) =>
-            webView.current?.injectJavaScript(
-              `window.postMessage(${JSON.stringify(htmlRenderResult(context.id, error))}, "*"); true;`,
-            );
-          const target = props.modelContextTarget;
-          if (target === undefined) {
-            reply("This page cannot share context.");
-            return;
-          }
-          void updateModelContext({
-            ...target,
-            input: { ...target.input, ...context.context },
-          }).then((result) =>
-            reply(result._tag === "Success" ? undefined : "Context could not be saved."),
-          );
+          void handleHtmlRenderModelContextRequest(event.nativeEvent.data, publishContext, reply);
         }}
         {...(props.nested
           ? {
