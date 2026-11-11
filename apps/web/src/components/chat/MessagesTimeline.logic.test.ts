@@ -75,6 +75,8 @@ describe("deriveMessagesTimelineRows", () => {
             {
               ...renderBase,
               kind,
+              sourceThreadId: ThreadId.make("thread"),
+              itemId: TurnItemId.make("render"),
               htmlRender: { attachmentId: "preview", title: "Preview", height: 420 },
             },
           ]

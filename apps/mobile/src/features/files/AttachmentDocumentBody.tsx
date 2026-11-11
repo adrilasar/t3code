@@ -1,3 +1,4 @@
+import type { HtmlRenderModelContextTarget } from "@t3tools/shared/htmlRender";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { View } from "react-native";
 
@@ -34,6 +35,7 @@ export function AttachmentDocumentBody(props: {
   readonly name: string;
   readonly environmentId: EnvironmentId | null;
   readonly htmlRender: boolean;
+  readonly modelContextTarget?: HtmlRenderModelContextTarget | undefined;
   readonly nativeViewer: "pending" | "open" | "unavailable" | null;
   readonly nativeError: string | null;
   readonly onOpenNative: () => void;
@@ -90,7 +92,13 @@ export function AttachmentDocumentBody(props: {
   }
   if (document.kind === "html") {
     return props.htmlRender ? (
-      <HtmlRenderWebView key={document.uri} uri={document.uri} title={props.name} nested={false} />
+      <HtmlRenderWebView
+        key={document.uri}
+        uri={document.uri}
+        title={props.name}
+        nested={false}
+        modelContextTarget={props.modelContextTarget}
+      />
     ) : (
       <WorkspaceFileWebPreview uri={document.uri} />
     );

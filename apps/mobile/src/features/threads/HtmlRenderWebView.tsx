@@ -3,6 +3,11 @@ import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   htmlRenderFileName,
+  handleHtmlRenderModelContextRequest,
+  htmlRenderModelContextReady,
+  HTML_RENDER_CONTEXT_READY,
+  type HtmlRenderModelContextTarget,
+  type HtmlRenderModelContext,
   htmlRenderFrameHeight,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
@@ -15,10 +20,14 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { uuidv4 } from "../../lib/uuid";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+
+import { mcpAppEnvironment } from "../../state/mcpApps";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const ROW_BOTTOM_MARGIN = 8;
 const FULL_SCREEN_GUTTER = 16;
@@ -74,17 +83,32 @@ function readOverflowMessage(data: string): Overflow | null {
 const withoutFragment = (url: string) => url.split("#", 1)[0];
 
 export function HtmlRenderWebView(props: {
+  readonly modelContextTarget?: HtmlRenderModelContextTarget | undefined;
   readonly uri: string;
   readonly title: string;
   readonly nested: boolean;
   readonly onLoadError?: () => void;
 }) {
   const theme = useHtmlRenderTheme();
+  const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
+    reportFailure: false,
+  });
   const [initialTheme] = useState(theme);
+  const [contextToken] = useState(uuidv4);
   const [generation, setGeneration] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [overflow, setOverflow] = useState(NO_OVERFLOW);
   const webView = useRef<WebView<object>>(null);
+  const publishContext = async (context: HtmlRenderModelContext) => {
+    const target = props.modelContextTarget;
+    if (target === undefined) return false;
+    const result = await updateModelContext({ ...target, input: { ...target.input, ...context } });
+    return result._tag === "Success";
+  };
+  const reply = (response: unknown) =>
+    webView.current?.injectJavaScript(
+      `window.postMessage(${JSON.stringify(response)}, "*"); true;`,
+    );
   const crashes = useRef(0);
   const shownTheme = useRef<HtmlRenderTheme | null>(null);
   const source = { uri: props.uri + htmlRenderThemeFragment(initialTheme) };
@@ -151,13 +175,27 @@ export function HtmlRenderWebView(props: {
         onHttpError={props.onLoadError}
         onContentProcessDidTerminate={restart}
         onRenderProcessGone={restart}
+        onMessage={(event: WebViewMessageEvent) => {
+          if (event.nativeEvent.data === HTML_RENDER_CONTEXT_READY) {
+            // injectJavaScript targets the main frame, even if a subframe requested the key.
+            reply(htmlRenderModelContextReady(contextToken));
+            return;
+          }
+          const next = readOverflowMessage(event.nativeEvent.data);
+          if (next !== null) {
+            setOverflow(next);
+            return;
+          }
+          void handleHtmlRenderModelContextRequest(
+            event.nativeEvent.data,
+            publishContext,
+            reply,
+            contextToken,
+          );
+        }}
         {...(props.nested
           ? {
               injectedJavaScript: OVERFLOW_SCRIPT,
-              onMessage: (event: WebViewMessageEvent) => {
-                const next = readOverflowMessage(event.nativeEvent.data);
-                if (next !== null) setOverflow(next);
-              },
             }
           : {})}
       />
@@ -174,6 +212,7 @@ export function ThreadHtmlRender(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly render: HtmlRenderReference;
+  readonly modelContextTarget: HtmlRenderModelContextTarget;
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
 }) {
@@ -217,6 +256,7 @@ export function ThreadHtmlRender(props: {
             key={`${uri}:${attempt}`}
             uri={uri}
             title={title}
+            modelContextTarget={props.modelContextTarget}
             nested
             onLoadError={handleLoadError}
           />
@@ -253,6 +293,8 @@ export function ThreadHtmlRender(props: {
                 mimeType: "text/html",
                 sizeBytes: "0",
                 htmlRender: "1",
+                htmlRenderSourceThreadId: String(props.modelContextTarget.input.threadId),
+                htmlRenderItemId: String(props.modelContextTarget.input.itemId),
               })
             }
           >

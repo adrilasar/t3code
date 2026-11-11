@@ -3,7 +3,10 @@ import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
   htmlRenderFrameHeight,
+  handleHtmlRenderModelContextRequest,
   type HtmlRenderReference,
+  type HtmlRenderModelContextTarget,
+  type HtmlRenderModelContext,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -11,7 +14,9 @@ import { useEffect, useState } from "react";
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 
-import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
+import { HtmlRenderDocument, type HtmlRenderMessageHandler } from "../files/BrowserDocumentFrame";
+import { mcpAppEnvironment } from "~/state/mcpApps";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -23,10 +28,23 @@ const MIN_URL_LIFE_MS = 5 * 60_000;
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
+  readonly modelContextTarget?: HtmlRenderModelContextTarget | undefined;
   readonly threadRef: ScopedThreadRef | undefined;
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { attachmentId, title } = props.htmlRender;
+  const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
+    reportFailure: false,
+  });
+  const publishContext = async (context: HtmlRenderModelContext) => {
+    const target = props.modelContextTarget;
+    if (target === undefined) return false;
+    const result = await updateModelContext({ ...target, input: { ...target.input, ...context } });
+    return result._tag === "Success";
+  };
+  const onMessage: HtmlRenderMessageHandler = (message, reply) => {
+    void handleHtmlRenderModelContextRequest(message, publishContext, reply);
+  };
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   const observeBox = (box: HTMLDivElement) => {
     setWidth(box.clientWidth);
@@ -73,6 +91,7 @@ export function HtmlRenderFrame(props: {
           <HtmlRenderDocument
             src={src}
             title={title}
+            onMessage={onMessage}
             threadRef={props.threadRef}
             className="block size-full"
             onContentHeight={setContentHeight}
@@ -111,6 +130,7 @@ export function HtmlRenderFrame(props: {
             <HtmlRenderDialog
               src={expandedSrc}
               htmlRender={props.htmlRender}
+              onMessage={onMessage}
               threadRef={props.threadRef}
               onClose={() => setExpandedSrc(null)}
             />

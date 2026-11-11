@@ -179,6 +179,8 @@ type RawThreadFeedEntry =
       readonly id: string;
       readonly createdAt: string;
       readonly runId: RunId | null;
+      readonly sourceThreadId: ThreadId;
+      readonly itemId: TurnItemId;
       readonly render: HtmlRenderReference;
     }
   | {
@@ -2301,6 +2303,8 @@ export function buildThreadFeed(
     if (render) {
       const entry: RawThreadFeedEntry = {
         type: "html-render",
+        sourceThreadId: row.sourceThreadId,
+        itemId: row.sourceItemId,
         id: `html-render:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
         createdAt,
         runId: item.runId,

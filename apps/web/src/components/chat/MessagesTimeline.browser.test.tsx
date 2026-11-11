@@ -252,6 +252,8 @@ describe("MessagesTimeline work rows", () => {
           {
             id: "preview",
             kind: "html-render",
+            sourceThreadId: ThreadId.make("thread"),
+            itemId: TurnItemId.make("preview"),
             createdAt: CREATED_AT,
             runId: RunId.make("preview-run"),
             htmlRender: { attachmentId: "preview", title: "Tall preview", height: 1450 },

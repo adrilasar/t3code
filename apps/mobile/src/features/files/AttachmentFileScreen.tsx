@@ -1,6 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   clampFileAttachmentUploadBytes,
   formatAttachmentSize,
@@ -31,6 +31,8 @@ export type AttachmentFileRouteParams = {
   readonly sizeBytes: string;
   readonly draftKey?: string;
   readonly htmlRender?: "1";
+  readonly htmlRenderSourceThreadId?: string;
+  readonly htmlRenderItemId?: string;
 };
 
 type AttachmentFileScreenProps = StaticScreenProps<AttachmentFileRouteParams>;
@@ -248,6 +250,21 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         name={params.name}
         environmentId={environmentId}
         htmlRender={params.htmlRender === "1"}
+        modelContextTarget={
+          environmentId &&
+          params.threadId &&
+          params.htmlRenderSourceThreadId &&
+          params.htmlRenderItemId
+            ? {
+                environmentId,
+                input: {
+                  threadId: ThreadId.make(params.htmlRenderSourceThreadId),
+                  itemId: TurnItemId.make(params.htmlRenderItemId),
+                  conversationThreadId: ThreadId.make(params.threadId),
+                },
+              }
+            : undefined
+        }
         nativeViewer={nativeViewer}
         nativeError={nativeError}
         onOpenNative={() => {

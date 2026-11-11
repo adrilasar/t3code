@@ -1,9 +1,15 @@
-import { describe, expect, it } from "vite-plus/test";
+import * as NodeVM from "node:vm";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
+  handleHtmlRenderModelContextRequest,
+  htmlRenderModelContextReady,
+  HTML_RENDER_CONTEXT_READY,
+  htmlRenderResult,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
@@ -130,5 +136,134 @@ describe("htmlRenderFromToolItem", () => {
     ] as const) {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);
     }
+  });
+});
+
+describe("HTML render model context", () => {
+  it.each(["web", "mobile"])(
+    "orders writes over %s and ignores stale replies",
+    async (platform) => {
+      const messages: unknown[] = [];
+      let receive!: (event: { data: unknown; source: unknown }) => void;
+      const window = {
+        parent: {} as unknown,
+        t3: {} as { updateModelContext: (state: unknown) => Promise<void> },
+        ReactNativeWebView:
+          platform === "mobile"
+            ? { postMessage: (data: string) => messages.push(data) }
+            : undefined,
+        addEventListener: (type: string, listener: typeof receive) => {
+          if (type === "message") receive = listener;
+        },
+      };
+      window.parent =
+        platform === "web" ? { postMessage: (data: unknown) => messages.push(data) } : window;
+      const script = /<script>([\s\S]*?)<\/script>/.exec(injectHtmlRenderBootstrap("<input>"))![1]!;
+      const boot = () =>
+        NodeVM.runInNewContext(script, {
+          window,
+          document: { getElementById: () => null },
+          TextEncoder,
+          setTimeout,
+        });
+      boot();
+      const update = vi.fn(async (_state: unknown) => true);
+      const reply = vi.fn((data: unknown) => receive({ data, source: window.parent }));
+      const token = platform === "mobile" ? "host-token" : undefined;
+      const initialize = (source: unknown = window) =>
+        receive({ data: htmlRenderModelContextReady("host-token"), source });
+      const respond = () =>
+        handleHtmlRenderModelContextRequest(messages.at(-1), update, reply, token);
+      const sent = messages.length;
+      const first = window.t3.updateModelContext({ value: "first" });
+      const state = { value: "second" };
+      const second = window.t3.updateModelContext(state);
+      state.value = "changed after enqueue";
+      if (platform === "mobile") {
+        expect(messages.at(-1)).toBe(HTML_RENDER_CONTEXT_READY);
+        expect(messages).toHaveLength(sent);
+        initialize({});
+        expect(messages).toHaveLength(sent);
+        initialize();
+      }
+      expect(messages).toHaveLength(sent + 1);
+      update.mockResolvedValueOnce(false);
+      reply.mockImplementationOnce((data) => receive({ data, source: {} }));
+      await respond();
+      await respond();
+      await first;
+      await respond();
+      await second;
+      expect(update.mock.calls.slice(-2)).toEqual([
+        [{ structuredContent: { value: "first" } }],
+        [{ structuredContent: { value: "second" } }],
+      ]);
+      const oldId = (reply.mock.calls[0]![0] as { id: string }).id;
+      update.mockResolvedValueOnce(false);
+      const clear = window.t3.updateModelContext(null);
+      const rejected = expect(clear).rejects.toThrow("Context could not be saved");
+      await respond();
+      expect(update).toHaveBeenLastCalledWith({});
+      await rejected;
+      for (const state of [[], { value: "表".repeat(6000) }])
+        await expect(window.t3.updateModelContext(state)).rejects.toThrow();
+      boot();
+      if (platform === "mobile") initialize();
+      const restarted = window.t3.updateModelContext({ value: "new document" });
+      reply(htmlRenderResult(oldId, "Reply from the old document"));
+      await respond();
+      await expect(restarted).resolves.toBeUndefined();
+    },
+  );
+
+  it("refuses native context updates without the main frame's host token", async () => {
+    const update = vi.fn(async () => true);
+    const reply = vi.fn();
+    const request = {
+      jsonrpc: "2.0",
+      id: "child",
+      method: "ui/update-model-context",
+      params: { structuredContent: { note: "untrusted iframe" } },
+    };
+    for (const token of [undefined, "guessed-token"])
+      await handleHtmlRenderModelContextRequest(
+        JSON.stringify({ ...request, t3ContextToken: token }),
+        update,
+        reply,
+        "host-token",
+      );
+    expect(update).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
+    await handleHtmlRenderModelContextRequest(
+      JSON.stringify({ ...request, t3ContextToken: "host-token" }),
+      update,
+      reply,
+      "host-token",
+    );
+    expect(update).toHaveBeenCalledExactlyOnceWith(request.params);
+  });
+
+  it("ignores malformed or unsupported messages without updating context", async () => {
+    const update = vi.fn(async () => true);
+    const reply = vi.fn();
+    const request = (params: unknown) => ({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "ui/update-model-context",
+      params,
+    });
+    for (const message of [
+      null,
+      "{",
+      {},
+      request(null),
+      request({ content: [] }),
+      ...[null, [], "text"].map((structuredContent) => request({ structuredContent })),
+      { ...request({}), id: undefined },
+      { ...request({}), method: "tools/call" },
+    ])
+      await handleHtmlRenderModelContextRequest(message, update, reply);
+    expect(update).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
   });
 });

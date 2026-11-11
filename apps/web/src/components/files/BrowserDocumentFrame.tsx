@@ -174,8 +174,14 @@ function FileDocument(props: { readonly src: string; readonly title: string }) {
   );
 }
 
+export type HtmlRenderMessageHandler = (
+  message: unknown,
+  reply: (response: unknown) => void,
+) => void;
+
 /** Keep the initial URL while mounted; re-signing must not reload the page. */
 export function HtmlRenderDocument(props: {
+  readonly onMessage?: HtmlRenderMessageHandler | undefined;
   readonly src: string;
   readonly title: string;
   readonly className?: string;
@@ -278,6 +284,7 @@ export function HtmlRenderDocument(props: {
   // focus by script, so this blocks opens on load, though not a page that waits for the
   // reader's next input.
   const onFrameMessage = useEffectEvent((frame: HTMLIFrameElement, event: MessageEvent) => {
+    props.onMessage?.(event.data, (response) => frame.contentWindow?.postMessage(response, "*"));
     const height = readHtmlRenderContentHeight(event.data);
     if (height !== undefined) {
       props.onContentHeight?.(height);

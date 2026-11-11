@@ -1,3 +1,5 @@
+import type { EnvironmentId, McpAppUpdateModelContextInput } from "@t3tools/contracts";
+
 import {
   T3_CODE_DARK_THEME_COLORS,
   T3_CODE_LIGHT_THEME_COLORS,
@@ -237,6 +239,87 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
   "Let content set the height. Do not use vh units or height:100% on html or body. Both are rejected or loop.",
 ].join(" ");
 
+export interface HtmlRenderModelContextTarget {
+  readonly environmentId: EnvironmentId;
+  readonly input: Pick<
+    McpAppUpdateModelContextInput,
+    "threadId" | "itemId" | "conversationThreadId"
+  >;
+}
+
+export type HtmlRenderModelContext = Pick<McpAppUpdateModelContextInput, "structuredContent">;
+
+export async function handleHtmlRenderModelContextRequest(
+  message: unknown,
+  update: (context: HtmlRenderModelContext) => Promise<boolean>,
+  reply: (response: ReturnType<typeof htmlRenderResult>) => void,
+  token?: string,
+) {
+  if (typeof message === "string") {
+    try {
+      message = JSON.parse(message);
+    } catch {
+      return;
+    }
+  }
+  if (typeof message !== "object" || message === null) return;
+  const { jsonrpc, method, id, params, t3ContextToken } = message as Record<string, unknown>;
+  if (token !== undefined && t3ContextToken !== token) return;
+  if (jsonrpc !== "2.0" || method !== "ui/update-model-context") return;
+  if (typeof id !== "string" && typeof id !== "number") return;
+  if (typeof params !== "object" || params === null || Array.isArray(params) || "content" in params)
+    return;
+  const state = (params as Record<string, unknown>).structuredContent;
+  if (state !== undefined && (typeof state !== "object" || state === null || Array.isArray(state)))
+    return;
+  const saved = await update(
+    state === undefined ? {} : { structuredContent: state as Record<string, unknown> },
+  );
+  reply(htmlRenderResult(id, saved ? undefined : "Context could not be saved."));
+}
+
+export const HTML_RENDER_CONTEXT_READY = "t3-html-render-context-ready";
+
+export function htmlRenderModelContextReady(token: string) {
+  return { jsonrpc: "2.0", method: "t3/notifications/model-context-ready", params: { token } };
+}
+
+const MODEL_CONTEXT_SCRIPT = `(function(){
+var token=null,pending=null,queue=[],next=0,prefix="t3-context-"+Math.random().toString(36).slice(2)+"-";
+function complete(error){
+  var p=pending;pending=null;
+  if(error)p.reject(error);else p.resolve();
+  send();
+}
+function send(){
+  if(pending||!queue.length||(window.ReactNativeWebView&&!token))return;
+  var p=pending=queue.shift();
+  try{
+    if(window.ReactNativeWebView){var m=JSON.parse(p.message);m.t3ContextToken=token;window.ReactNativeWebView.postMessage(JSON.stringify(m));}
+    else window.parent.postMessage(JSON.parse(p.message),"*");
+  }catch(e){complete(e);}
+}
+window.t3={updateModelContext:function(state){
+  return new Promise(function(resolve,reject){
+    if(state!==null&&(typeof state!=="object"||Array.isArray(state)))return reject(new Error("State must be an object or null."));
+    if(queue.length+(pending?1:0)>=16)return reject(new Error("Too many pending context updates."));
+    var id=prefix+(++next),message;
+    try{message=JSON.stringify({jsonrpc:"2.0",id:id,method:"ui/update-model-context",params:state===null?{}:{structuredContent:state}});}catch(e){reject(e);return;}
+    if(new TextEncoder().encode(message).length>16384)return reject(new Error("Model context is too large."));
+    queue.push({id:id,message:message,resolve:resolve,reject:reject});
+    send();
+  });
+}};
+window.addEventListener("message",function(e){
+  if(e.source!==(window.ReactNativeWebView?window:window.parent))return;
+  var d=e.data;
+  if(window.ReactNativeWebView&&d&&d.method===${JSON.stringify(htmlRenderModelContextReady("").method)}&&d.params&&typeof d.params.token==="string"){token=d.params.token;send();return;}
+  if(!pending||!d||d.jsonrpc!=="2.0"||d.id!==pending.id||(!d.error&&!("result" in d)))return;
+  complete(d.error?new Error(d.error.message):undefined);
+});
+if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(${JSON.stringify(HTML_RENDER_CONTEXT_READY)});
+})();`;
+
 const HOST_CONTEXT_CHANGED_METHOD = "ui/notifications/host-context-changed";
 const OPEN_LINK_METHOD = "ui/open-link";
 const SIZE_CHANGED_METHOD = "ui/notifications/size-changed";
@@ -335,8 +418,12 @@ export function htmlRenderShortcutsMessage(
   return { jsonrpc: "2.0", method: SHORTCUTS_METHOD, params: { shortcuts, blocked } } as const;
 }
 
-export function htmlRenderResult(id: string | number) {
-  return { jsonrpc: "2.0", id, result: {} } as const;
+export function htmlRenderResult(id: string | number, error?: string) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    ...(error === undefined ? { result: {} } : { error: { code: -32000, message: error } }),
+  } as const;
 }
 
 const THEME_FRAGMENT_KEY = "t3-theme";
@@ -381,7 +468,7 @@ function bootstrapMarkup(markup: string): string {
       ? ""
       : '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style id="t3-theme">${defaultCss}</style>`,
-    `<script>${BOOTSTRAP_SCRIPT}</script>`,
+    `<script>${BOOTSTRAP_SCRIPT}${MODEL_CONTEXT_SCRIPT}</script>`,
   ].join("");
 }
 

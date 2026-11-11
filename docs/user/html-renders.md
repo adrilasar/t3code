@@ -10,6 +10,12 @@ Before publishing, agents check their work with screenshots from a small headles
 
 Previews can load public resources such as CDN scripts, but nothing on your local network. The machine running the environment looks up each name, and previews block names that resolve to private or reserved addresses. Clash or Mihomo in fake-IP DNS mode can return these addresses, so external resources can fail there. The preview's console messages can identify affected hostnames. Inline the resource, add its host to `fake-ip-filter`, or switch that machine's proxy DNS to `redir-host`.
 
+Pages can publish JSON context with `await window.t3.updateModelContext(state)`.
+The latest value is included in the agent's next turn; `null` clears it.
+The promise resolves after saving.
+Each page replaces its previous value, with a 16 KiB limit per update and a
+32 KiB combined budget for pages in a conversation. Saving never starts a turn.
+
 ## MCP apps
 
 Some MCP servers return an interactive app with their tool results, following the [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) standard. When an agent calls one of those tools, the app appears in the thread in place of the tool call, on web, desktop, and mobile. Codex and Claude support this today, for any MCP server you have configured for them. Claude needs Claude Code 2.1.301 or newer; older versions and other providers show these calls as ordinary tool calls.
