@@ -12,7 +12,7 @@ Previews can load public resources such as CDN scripts, but nothing on your loca
 
 Pages can publish JSON context with `await window.t3.updateModelContext(state)`.
 The latest value is included in the agent's next turn; `null` clears it.
-T3 Code asks before a page can share input. The promise resolves after saving.
+The promise resolves after saving.
 Each page replaces its previous value, with a 16 KiB limit per update and a
 32 KiB combined budget for pages in a conversation. Saving never starts a turn.
 

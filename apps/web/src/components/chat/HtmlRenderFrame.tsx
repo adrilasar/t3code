@@ -9,7 +9,7 @@ import {
   type HtmlRenderModelContext,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
@@ -22,8 +22,6 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
 import { observeResize } from "~/lib/observeResize";
-
-import { requestConfirmDialog } from "~/confirmDialog";
 
 const MIN_URL_LIFE_MS = 5 * 60_000;
 
@@ -38,22 +36,9 @@ export function HtmlRenderFrame(props: {
   const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
     reportFailure: false,
   });
-  const consent = useRef<{ key: string; decision: Promise<boolean> } | null>(null);
   const publishContext = async (context: HtmlRenderModelContext) => {
     const target = props.modelContextTarget;
     if (target === undefined) return false;
-    const key = JSON.stringify([target.environmentId, target.input]);
-    if (consent.current?.key !== key) {
-      consent.current = {
-        key,
-        decision:
-          requestConfirmDialog(
-            `Allow “${title}” to share page input with the agent in this conversation?`,
-            { initialFocus: "cancel" },
-          ) ?? Promise.resolve(false),
-      };
-    }
-    if (!(await consent.current.decision)) return false;
     const result = await updateModelContext({ ...target, input: { ...target.input, ...context } });
     return result._tag === "Success";
   };
