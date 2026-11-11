@@ -3,6 +3,8 @@ import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
   htmlRenderFrameHeight,
+  htmlRenderResult,
+  readHtmlRenderModelContextRequest,
   type HtmlRenderReference,
   type HtmlRenderModelContextTarget,
 } from "@t3tools/shared/htmlRender";
@@ -12,7 +14,9 @@ import { useEffect, useState } from "react";
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 
-import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
+import { HtmlRenderDocument, type HtmlRenderMessageHandler } from "../files/BrowserDocumentFrame";
+import { mcpAppEnvironment } from "~/state/mcpApps";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -29,6 +33,27 @@ export function HtmlRenderFrame(props: {
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { attachmentId, title } = props.htmlRender;
+  const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
+    reportFailure: false,
+  });
+  const onMessage: HtmlRenderMessageHandler = (message, reply) => {
+    const request = readHtmlRenderModelContextRequest(message);
+    if (request === undefined) return;
+    const target = props.modelContextTarget;
+    if (target === undefined) {
+      reply(htmlRenderResult(request.id, "This page cannot share context."));
+      return;
+    }
+    void updateModelContext({ ...target, input: { ...target.input, ...request.context } }).then(
+      (result) =>
+        reply(
+          htmlRenderResult(
+            request.id,
+            result._tag === "Success" ? undefined : "Context could not be saved.",
+          ),
+        ),
+    );
+  };
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   const observeBox = (box: HTMLDivElement) => {
     setWidth(box.clientWidth);
@@ -75,7 +100,7 @@ export function HtmlRenderFrame(props: {
           <HtmlRenderDocument
             src={src}
             title={title}
-            modelContextTarget={props.modelContextTarget}
+            onMessage={onMessage}
             threadRef={props.threadRef}
             className="block size-full"
             onContentHeight={setContentHeight}
@@ -114,7 +139,7 @@ export function HtmlRenderFrame(props: {
             <HtmlRenderDialog
               src={expandedSrc}
               htmlRender={props.htmlRender}
-              modelContextTarget={props.modelContextTarget}
+              onMessage={onMessage}
               threadRef={props.threadRef}
               onClose={() => setExpandedSrc(null)}
             />

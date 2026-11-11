@@ -3,21 +3,20 @@ import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFrameHeight,
   type HtmlRenderReference,
-  type HtmlRenderModelContextTarget,
 } from "@t3tools/shared/htmlRender";
 import { MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { observeResize } from "~/lib/observeResize";
 
-import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
+import { HtmlRenderDocument, type HtmlRenderMessageHandler } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 
 export function HtmlRenderDialog(props: {
   readonly src: string;
   readonly htmlRender: HtmlRenderReference;
-  readonly modelContextTarget?: HtmlRenderModelContextTarget | undefined;
+  readonly onMessage?: HtmlRenderMessageHandler | undefined;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onClose: () => void;
 }) {
@@ -65,7 +64,7 @@ export function HtmlRenderDialog(props: {
                 <HtmlRenderDocument
                   src={props.src}
                   title={title}
-                  modelContextTarget={props.modelContextTarget}
+                  onMessage={props.onMessage}
                   threadRef={props.threadRef}
                   className="block size-full"
                   onContentHeight={setContentHeight}
