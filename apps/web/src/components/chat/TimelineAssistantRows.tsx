@@ -265,6 +265,14 @@ export function HtmlRenderTimelineRow({
         key={row.htmlRender.attachmentId}
         environmentId={ctx.activeThreadEnvironmentId}
         htmlRender={row.htmlRender}
+        modelContextTarget={{
+          environmentId: ctx.activeThreadEnvironmentId,
+          input: {
+            threadId: row.sourceThreadId,
+            itemId: row.itemId,
+            conversationThreadId: ctx.threadRef?.threadId ?? row.sourceThreadId,
+          },
+        }}
         threadRef={ctx.threadRef ?? undefined}
         onFullscreenChange={onFullscreenChange}
       />

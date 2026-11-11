@@ -3,6 +3,9 @@ import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   htmlRenderFileName,
+  htmlRenderResult,
+  readHtmlRenderModelContextRequest,
+  type HtmlRenderModelContextTarget,
   htmlRenderFrameHeight,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
@@ -19,6 +22,9 @@ import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+
+import { mcpAppEnvironment } from "../../state/mcpApps";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const ROW_BOTTOM_MARGIN = 8;
 const FULL_SCREEN_GUTTER = 16;
@@ -74,12 +80,16 @@ function readOverflowMessage(data: string): Overflow | null {
 const withoutFragment = (url: string) => url.split("#", 1)[0];
 
 export function HtmlRenderWebView(props: {
+  readonly modelContextTarget?: HtmlRenderModelContextTarget | undefined;
   readonly uri: string;
   readonly title: string;
   readonly nested: boolean;
   readonly onLoadError?: () => void;
 }) {
   const theme = useHtmlRenderTheme();
+  const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
+    reportFailure: false,
+  });
   const [initialTheme] = useState(theme);
   const [generation, setGeneration] = useState(0);
   const [loaded, setLoaded] = useState(false);
@@ -151,13 +161,40 @@ export function HtmlRenderWebView(props: {
         onHttpError={props.onLoadError}
         onContentProcessDidTerminate={restart}
         onRenderProcessGone={restart}
+        onMessage={(event: WebViewMessageEvent) => {
+          if (withoutFragment(event.nativeEvent.url) !== withoutFragment(props.uri)) return;
+          const next = readOverflowMessage(event.nativeEvent.data);
+          if (next !== null) {
+            setOverflow(next);
+            return;
+          }
+          let message: unknown;
+          try {
+            message = JSON.parse(event.nativeEvent.data);
+          } catch {
+            return;
+          }
+          const context = readHtmlRenderModelContextRequest(message);
+          if (context === undefined) return;
+          const reply = (error?: string) =>
+            webView.current?.injectJavaScript(
+              `window.postMessage(${JSON.stringify(htmlRenderResult(context.id, error))}, "*"); true;`,
+            );
+          const target = props.modelContextTarget;
+          if (target === undefined) {
+            reply("This page cannot share context.");
+            return;
+          }
+          void updateModelContext({
+            ...target,
+            input: { ...target.input, ...context.context },
+          }).then((result) =>
+            reply(result._tag === "Success" ? undefined : "Context could not be saved."),
+          );
+        }}
         {...(props.nested
           ? {
               injectedJavaScript: OVERFLOW_SCRIPT,
-              onMessage: (event: WebViewMessageEvent) => {
-                const next = readOverflowMessage(event.nativeEvent.data);
-                if (next !== null) setOverflow(next);
-              },
             }
           : {})}
       />
@@ -174,6 +211,7 @@ export function ThreadHtmlRender(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly render: HtmlRenderReference;
+  readonly modelContextTarget: HtmlRenderModelContextTarget;
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
 }) {
@@ -217,6 +255,7 @@ export function ThreadHtmlRender(props: {
             key={`${uri}:${attempt}`}
             uri={uri}
             title={title}
+            modelContextTarget={props.modelContextTarget}
             nested
             onLoadError={handleLoadError}
           />
@@ -253,6 +292,8 @@ export function ThreadHtmlRender(props: {
                 mimeType: "text/html",
                 sizeBytes: "0",
                 htmlRender: "1",
+                htmlRenderSourceThreadId: String(props.modelContextTarget.input.threadId),
+                htmlRenderItemId: String(props.modelContextTarget.input.itemId),
               })
             }
           >

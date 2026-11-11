@@ -35,7 +35,7 @@ const deepParent = (id: ThreadId): ThreadId | null => {
   return depth === 1 ? threadId : deepForkId(depth - 1);
 };
 
-const appItem = (output: unknown): OrchestrationV2TurnItem => ({
+const appItem = (output: unknown): Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }> => ({
   id: itemId,
   threadId,
   runId: null,
@@ -251,6 +251,41 @@ describe("McpAppRequests", () => {
       yield* requests.updateModelContext(own);
       assert.isFalse(storedContext.has(`${threadId}/${itemId}`));
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), live: false }))),
+  );
+
+  it.effect("accepts HTML render context without granting MCP tool access", () =>
+    Effect.gen(function* () {
+      const requests = yield* McpAppRequests.McpAppRequests;
+      const own = { threadId, itemId, conversationThreadId: threadId };
+      yield* requests.updateModelContext({ ...own, structuredContent: { name: "Ada" } });
+      assert.equal(storedContext.get(`${threadId}/${itemId}`), '{"name":"Ada"}');
+      yield* requests.updateModelContext({ ...own, structuredContent: { name: "Updated" } });
+      assert.equal(storedContext.get(`${threadId}/${itemId}`), '{"name":"Updated"}');
+      yield* requests.updateModelContext({ ...own, conversationThreadId: forkId });
+      assert.equal(
+        yield* reason(requests.updateModelContext({ ...own, conversationThreadId: unrelatedId })),
+        "not-an-app",
+      );
+      assert.equal(
+        yield* reason(requests.callTool({ threadId, itemId, name: "refresh", arguments: {} })),
+        "not-an-app",
+      );
+      yield* requests.updateModelContext(own);
+      assert.isFalse(storedContext.has(`${threadId}/${itemId}`));
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          item: {
+            ...appItem({
+              htmlRender: { attachmentId: app.attachmentId, title: "Form", height: 200 },
+            }),
+            toolName: "mcp__t3-code__html_render",
+            providerThreadId: null,
+          },
+          live: false,
+        }),
+      ),
+    ),
   );
 
   it.effect("stores a fork's model context under the fork, and refuses unrelated threads", () =>

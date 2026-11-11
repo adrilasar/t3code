@@ -1717,6 +1717,14 @@ function renderFeedEntry(
         environmentId={props.environmentId}
         threadId={props.threadId}
         render={entry.render}
+        modelContextTarget={{
+          environmentId: props.environmentId,
+          input: {
+            threadId: entry.sourceThreadId,
+            itemId: entry.itemId,
+            conversationThreadId: props.threadId,
+          },
+        }}
         frameWidth={props.contentWidth}
         iconColor={iconSubtleColor}
       />

@@ -121,6 +121,8 @@ export type TimelineEntry = (
       readonly kind: "html-render";
       readonly createdAt: string;
       readonly runId: RunId | null;
+      readonly sourceThreadId: ThreadId;
+      readonly itemId: TurnItemId;
       readonly htmlRender: HtmlRenderReference;
     }
   | {
@@ -638,6 +640,8 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       entries.push({
         id: item.id,
         kind: "html-render",
+        sourceThreadId: row.sourceThreadId,
+        itemId: row.sourceItemId,
         createdAt,
         runId: item.runId,
         htmlRender,

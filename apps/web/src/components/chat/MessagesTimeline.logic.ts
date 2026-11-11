@@ -635,6 +635,8 @@ type MessagesTimelineRowContent =
       kind: "html-render";
       id: string;
       createdAt: string;
+      readonly sourceThreadId: ThreadId;
+      readonly itemId: TurnItemId;
       htmlRender: HtmlRenderReference;
     }
   | {
@@ -2110,6 +2112,8 @@ export function deriveMessagesTimelineRows(input: {
     if (timelineEntry.kind === "html-render") {
       nextRows.push({
         kind: "html-render",
+        sourceThreadId: timelineEntry.sourceThreadId,
+        itemId: timelineEntry.itemId,
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         htmlRender: timelineEntry.htmlRender,

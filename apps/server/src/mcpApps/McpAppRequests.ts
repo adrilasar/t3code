@@ -12,7 +12,7 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { mcpAppToolCallableByApp, type McpAppReference } from "@t3tools/shared/mcpApp";
-import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
+import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -185,7 +185,18 @@ const make = Effect.gen(function* () {
   const updateModelContext = Effect.fn("McpAppRequests.updateModelContext")(function* (
     input: McpAppUpdateModelContextInput,
   ) {
-    const { app } = yield* resolveApp(input);
+    const item = yield* orchestrator
+      .getTurnItem({ threadId: input.threadId, itemId: input.itemId })
+      .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
+    const app =
+      item?.type === "dynamic_tool"
+        ? htmlRenderFromToolItem(item) !== undefined
+          ? { server: "t3-code", tool: "html_render" }
+          : item.providerThreadId !== null
+            ? mcpAppFromToolItem(item)
+            : undefined
+        : undefined;
+    if (app === undefined) return yield* fail(input.threadId, "not-an-app");
     // Context belongs only to the app's thread or its descendants.
     if (!(yield* descendsFrom(input.conversationThreadId, input.threadId))) {
       return yield* fail(input.threadId, "not-an-app");

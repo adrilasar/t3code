@@ -16,6 +16,8 @@ import {
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
+  readHtmlRenderModelContextRequest,
+  type HtmlRenderModelContextTarget,
 } from "@t3tools/shared/htmlRender";
 import {
   isMacPlatform,
@@ -32,6 +34,8 @@ import {
   useState,
 } from "react";
 import { isElectron } from "~/env";
+import { mcpAppEnvironment } from "~/state/mcpApps";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
 import type { PdfViewState } from "./PdfViewer";
 
@@ -176,6 +180,7 @@ function FileDocument(props: { readonly src: string; readonly title: string }) {
 
 /** Keep the initial URL while mounted; re-signing must not reload the page. */
 export function HtmlRenderDocument(props: {
+  readonly modelContextTarget?: HtmlRenderModelContextTarget | undefined;
   readonly src: string;
   readonly title: string;
   readonly className?: string;
@@ -185,6 +190,9 @@ export function HtmlRenderDocument(props: {
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
 }) {
   const theme = useHtmlRenderTheme();
+  const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
+    reportFailure: false,
+  });
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
   const [loaded, setLoaded] = useState(false);
@@ -278,6 +286,29 @@ export function HtmlRenderDocument(props: {
   // focus by script, so this blocks opens on load, though not a page that waits for the
   // reader's next input.
   const onFrameMessage = useEffectEvent((frame: HTMLIFrameElement, event: MessageEvent) => {
+    const context = readHtmlRenderModelContextRequest(event.data);
+    if (context !== undefined) {
+      const target = props.modelContextTarget;
+      if (target === undefined) {
+        frame.contentWindow?.postMessage(
+          htmlRenderResult(context.id, "This page cannot share context."),
+          "*",
+        );
+      } else {
+        void updateModelContext({ ...target, input: { ...target.input, ...context.context } }).then(
+          (result) => {
+            frame.contentWindow?.postMessage(
+              htmlRenderResult(
+                context.id,
+                result._tag === "Success" ? undefined : "Context could not be saved.",
+              ),
+              "*",
+            );
+          },
+        );
+      }
+      return;
+    }
     const height = readHtmlRenderContentHeight(event.data);
     if (height !== undefined) {
       props.onContentHeight?.(height);

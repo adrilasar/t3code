@@ -4,6 +4,7 @@ import {
   htmlRenderFileName,
   htmlRenderFrameHeight,
   type HtmlRenderReference,
+  type HtmlRenderModelContextTarget,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -23,6 +24,7 @@ const MIN_URL_LIFE_MS = 5 * 60_000;
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
+  readonly modelContextTarget?: HtmlRenderModelContextTarget | undefined;
   readonly threadRef: ScopedThreadRef | undefined;
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
@@ -73,6 +75,7 @@ export function HtmlRenderFrame(props: {
           <HtmlRenderDocument
             src={src}
             title={title}
+            modelContextTarget={props.modelContextTarget}
             threadRef={props.threadRef}
             className="block size-full"
             onContentHeight={setContentHeight}
@@ -111,6 +114,7 @@ export function HtmlRenderFrame(props: {
             <HtmlRenderDialog
               src={expandedSrc}
               htmlRender={props.htmlRender}
+              modelContextTarget={props.modelContextTarget}
               threadRef={props.threadRef}
               onClose={() => setExpandedSrc(null)}
             />
