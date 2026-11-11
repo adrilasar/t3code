@@ -172,7 +172,7 @@ export function HtmlRenderWebView(props: {
         onContentProcessDidTerminate={restart}
         onRenderProcessGone={restart}
         onMessage={(event: WebViewMessageEvent) => {
-          // Android reports the CSP-sandboxed page's opaque origin; navigation is gated above.
+          // Android reports "null" for opaque origins, including sandboxed subframes.
           if (
             !(Platform.OS === "android" && event.nativeEvent.url === "null") &&
             withoutFragment(event.nativeEvent.url) !== withoutFragment(props.uri)
