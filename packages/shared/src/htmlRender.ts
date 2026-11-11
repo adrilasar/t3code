@@ -253,6 +253,7 @@ export async function handleHtmlRenderModelContextRequest(
   message: unknown,
   update: (context: HtmlRenderModelContext) => Promise<boolean>,
   reply: (response: ReturnType<typeof htmlRenderResult>) => void,
+  token?: string,
 ) {
   if (typeof message === "string") {
     try {
@@ -262,7 +263,8 @@ export async function handleHtmlRenderModelContextRequest(
     }
   }
   if (typeof message !== "object" || message === null) return;
-  const { jsonrpc, method, id, params } = message as Record<string, unknown>;
+  const { jsonrpc, method, id, params, t3ContextToken } = message as Record<string, unknown>;
+  if (token !== undefined && t3ContextToken !== token) return;
   if (jsonrpc !== "2.0" || method !== "ui/update-model-context") return;
   if (typeof id !== "string" && typeof id !== "number") return;
   if (typeof params !== "object" || params === null || Array.isArray(params) || "content" in params)
@@ -276,18 +278,24 @@ export async function handleHtmlRenderModelContextRequest(
   reply(htmlRenderResult(id, saved ? undefined : "Context could not be saved."));
 }
 
+export const HTML_RENDER_CONTEXT_READY = "t3-html-render-context-ready";
+
+export function htmlRenderModelContextReady(token: string) {
+  return { jsonrpc: "2.0", method: "t3/notifications/model-context-ready", params: { token } };
+}
+
 const MODEL_CONTEXT_SCRIPT = `(function(){
-var pending=null,queue=[],next=0,prefix="t3-context-"+Math.random().toString(36).slice(2)+"-";
+var token=null,pending=null,queue=[],next=0,prefix="t3-context-"+Math.random().toString(36).slice(2)+"-";
 function complete(error){
   var p=pending;pending=null;
   if(error)p.reject(error);else p.resolve();
   send();
 }
 function send(){
-  if(pending||!queue.length)return;
+  if(pending||!queue.length||(window.ReactNativeWebView&&!token))return;
   var p=pending=queue.shift();
   try{
-    if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(p.message);
+    if(window.ReactNativeWebView){var m=JSON.parse(p.message);m.t3ContextToken=token;window.ReactNativeWebView.postMessage(JSON.stringify(m));}
     else window.parent.postMessage(JSON.parse(p.message),"*");
   }catch(e){complete(e);}
 }
@@ -303,11 +311,13 @@ window.t3={updateModelContext:function(state){
   });
 }};
 window.addEventListener("message",function(e){
-  if(window.parent!==window&&e.source!==window.parent)return;
+  if(e.source!==(window.ReactNativeWebView?window:window.parent))return;
   var d=e.data;
+  if(window.ReactNativeWebView&&d&&d.method===${JSON.stringify(htmlRenderModelContextReady("").method)}&&d.params&&typeof d.params.token==="string"){token=d.params.token;send();return;}
   if(!pending||!d||d.jsonrpc!=="2.0"||d.id!==pending.id||(!d.error&&!("result" in d)))return;
   complete(d.error?new Error(d.error.message):undefined);
 });
+if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(${JSON.stringify(HTML_RENDER_CONTEXT_READY)});
 })();`;
 
 const HOST_CONTEXT_CHANGED_METHOD = "ui/notifications/host-context-changed";

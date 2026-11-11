@@ -4,6 +4,8 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   htmlRenderFileName,
   handleHtmlRenderModelContextRequest,
+  htmlRenderModelContextReady,
+  HTML_RENDER_CONTEXT_READY,
   type HtmlRenderModelContextTarget,
   type HtmlRenderModelContext,
   htmlRenderFrameHeight,
@@ -18,6 +20,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { uuidv4 } from "../../lib/uuid";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
@@ -91,6 +94,7 @@ export function HtmlRenderWebView(props: {
     reportFailure: false,
   });
   const [initialTheme] = useState(theme);
+  const [contextToken] = useState(uuidv4);
   const [generation, setGeneration] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [overflow, setOverflow] = useState(NO_OVERFLOW);
@@ -172,18 +176,22 @@ export function HtmlRenderWebView(props: {
         onContentProcessDidTerminate={restart}
         onRenderProcessGone={restart}
         onMessage={(event: WebViewMessageEvent) => {
-          // Android reports "null" for opaque origins, including sandboxed subframes.
-          if (
-            !(Platform.OS === "android" && event.nativeEvent.url === "null") &&
-            withoutFragment(event.nativeEvent.url) !== withoutFragment(props.uri)
-          )
+          if (event.nativeEvent.data === HTML_RENDER_CONTEXT_READY) {
+            // injectJavaScript targets the main frame, even if a subframe requested the key.
+            reply(htmlRenderModelContextReady(contextToken));
             return;
+          }
           const next = readOverflowMessage(event.nativeEvent.data);
           if (next !== null) {
             setOverflow(next);
             return;
           }
-          void handleHtmlRenderModelContextRequest(event.nativeEvent.data, publishContext, reply);
+          void handleHtmlRenderModelContextRequest(
+            event.nativeEvent.data,
+            publishContext,
+            reply,
+            contextToken,
+          );
         }}
         {...(props.nested
           ? {
