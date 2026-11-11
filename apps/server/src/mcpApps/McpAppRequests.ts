@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -47,6 +48,7 @@ export class McpAppRequests extends Context.Service<
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const utf8 = new TextEncoder();
+const HTML_CONTEXT_MAX_BYTES = 32 * 1024;
 
 const readOnlyHint = (tool: ProviderAdapter.ProviderAdapterV2McpTool) =>
   Predicate.isObject(tool.annotations) && tool.annotations.readOnlyHint === true;
@@ -61,6 +63,7 @@ const make = Effect.gen(function* () {
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const modelContext = yield* McpAppModelContext.McpAppModelContext;
+  const htmlContextWrites = yield* Semaphore.make(1);
 
   const fail = (threadId: ThreadId, reason: McpAppRequestError["reason"], cause?: unknown) =>
     new McpAppRequestError({ threadId, reason, ...(cause === undefined ? {} : { cause }) });
@@ -188,9 +191,11 @@ const make = Effect.gen(function* () {
     const item = yield* orchestrator
       .getTurnItem({ threadId: input.threadId, itemId: input.itemId })
       .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
+    const isHtmlRender =
+      item?.type === "dynamic_tool" && htmlRenderFromToolItem(item) !== undefined;
     const app =
       item?.type === "dynamic_tool"
-        ? htmlRenderFromToolItem(item) !== undefined
+        ? isHtmlRender
           ? { server: "t3-code", tool: "html_render" }
           : item.providerThreadId !== null
             ? mcpAppFromToolItem(item)
@@ -219,7 +224,7 @@ const make = Effect.gen(function* () {
         new Error("Model context is too large."),
       );
     }
-    yield* modelContext
+    const save = modelContext
       .set({
         threadId: input.conversationThreadId,
         itemId: input.itemId,
@@ -228,6 +233,29 @@ const make = Effect.gen(function* () {
         text,
       })
       .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
+    if (!isHtmlRender) return yield* save;
+    yield* Effect.gen(function* () {
+      if (text.trim() !== "") {
+        const entries = yield* modelContext
+          .forThread(input.conversationThreadId)
+          .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
+        const html = entries.filter(
+          (entry) =>
+            entry.server === "t3-code" &&
+            entry.tool === "html_render" &&
+            entry.itemId !== input.itemId,
+        );
+        const next = [...html, { itemId: input.itemId, server: app.server, tool: app.tool, text }];
+        if (utf8.encode(encodeJson(next)).byteLength > HTML_CONTEXT_MAX_BYTES) {
+          return yield* fail(
+            input.threadId,
+            "request-failed",
+            new Error("Combined page context is too large."),
+          );
+        }
+      }
+      yield* save;
+    }).pipe(htmlContextWrites.withPermits(1));
   });
 
   return McpAppRequests.of({ callTool, toolInfo, readResource, updateModelContext });

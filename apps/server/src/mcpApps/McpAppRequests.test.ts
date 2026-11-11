@@ -70,16 +70,31 @@ function makeLayer(input: {
   readonly mcpApps?: ProviderAdapter.ProviderAdapterV2McpApps;
   readonly live?: boolean;
 }) {
+  const entries = new Map<
+    string,
+    McpAppModelContext.McpAppModelContextEntry & { threadId: ThreadId }
+  >();
   return McpAppRequests.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(McpAppModelContext.McpAppModelContext)({
           set: (entry) =>
-            Effect.sync(() => {
-              const key = `${entry.threadId}/${entry.itemId}`;
-              if (entry.text.trim() === "") storedContext.delete(key);
-              else storedContext.set(key, entry.text);
-            }),
+            Effect.yieldNow.pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  const key = `${entry.threadId}/${entry.itemId}`;
+                  if (entry.text.trim() === "") {
+                    storedContext.delete(key);
+                    entries.delete(key);
+                  } else {
+                    storedContext.set(key, entry.text);
+                    entries.set(key, entry);
+                  }
+                }),
+              ),
+            ),
+          forThread: (id) =>
+            Effect.sync(() => [...entries.values()].filter((entry) => entry.threadId === id)),
         }),
         Layer.mock(Orchestrator.OrchestratorV2)({
           getTurnItem: () => Effect.succeed(input.item),
@@ -272,6 +287,53 @@ describe("McpAppRequests", () => {
               htmlRender: { attachmentId: app.attachmentId, title: "Form", height: 200 },
             }),
             toolName: "mcp__t3-code__html_render",
+            providerThreadId: null,
+          },
+          live: false,
+        }),
+      ),
+    ),
+  );
+
+  it.effect("bounds combined HTML context across concurrent pages and frees space on clear", () =>
+    Effect.gen(function* () {
+      const requests = yield* McpAppRequests.McpAppRequests;
+      const ids = ["html-budget-1", "html-budget-2", "html-budget-3"].map((id) =>
+        TurnItemId.make(id),
+      );
+      const publish = (id: TurnItemId) =>
+        requests.updateModelContext({
+          threadId,
+          itemId: id,
+          conversationThreadId: threadId,
+          structuredContent: { value: "x".repeat(15000) },
+        });
+      const results = yield* Effect.forEach(ids, (id) => Effect.exit(publish(id)), {
+        concurrency: "unbounded",
+      });
+      assert.equal(results.filter((result) => result._tag === "Success").length, 2);
+      const refused = ids.find((id) => !storedContext.has(`${threadId}/${id}`))!;
+      const kept = ids.find((id) => storedContext.has(`${threadId}/${id}`))!;
+      yield* requests.updateModelContext({
+        threadId,
+        itemId: kept,
+        conversationThreadId: threadId,
+      });
+      yield* publish(refused);
+      for (const id of ids)
+        yield* requests.updateModelContext({
+          threadId,
+          itemId: id,
+          conversationThreadId: threadId,
+        });
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          item: {
+            ...appItem({
+              htmlRender: { attachmentId: app.attachmentId, title: "Form", height: 200 },
+            }),
+            toolName: "html_render",
             providerThreadId: null,
           },
           live: false,

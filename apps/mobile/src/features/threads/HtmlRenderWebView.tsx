@@ -13,7 +13,7 @@ import {
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
 import { useEffect, useRef, useState } from "react";
-import { Platform, Pressable, View, type ColorValue } from "react-native";
+import { Alert, Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -95,9 +95,26 @@ export function HtmlRenderWebView(props: {
   const [loaded, setLoaded] = useState(false);
   const [overflow, setOverflow] = useState(NO_OVERFLOW);
   const webView = useRef<WebView<object>>(null);
+  const consent = useRef<{ key: string; decision: Promise<boolean> } | null>(null);
   const publishContext = async (context: HtmlRenderModelContext) => {
     const target = props.modelContextTarget;
     if (target === undefined) return false;
+    const key = JSON.stringify([target.environmentId, target.input]);
+    if (consent.current?.key !== key) {
+      const decision = new Promise<boolean>((resolve) =>
+        Alert.alert(
+          "Share page input?",
+          `Allow “${props.title}” to share page input with the agent in this conversation?`,
+          [
+            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+            { text: "Allow", onPress: () => resolve(true) },
+          ],
+          { cancelable: true, onDismiss: () => resolve(false) },
+        ),
+      );
+      consent.current = { key, decision };
+    }
+    if (!(await consent.current.decision)) return false;
     const result = await updateModelContext({ ...target, input: { ...target.input, ...context } });
     return result._tag === "Success";
   };
@@ -172,7 +189,12 @@ export function HtmlRenderWebView(props: {
         onContentProcessDidTerminate={restart}
         onRenderProcessGone={restart}
         onMessage={(event: WebViewMessageEvent) => {
-          if (withoutFragment(event.nativeEvent.url) !== withoutFragment(props.uri)) return;
+          // Android reports the CSP-sandboxed page's opaque origin; navigation is gated above.
+          if (
+            !(Platform.OS === "android" && event.nativeEvent.url === "null") &&
+            withoutFragment(event.nativeEvent.url) !== withoutFragment(props.uri)
+          )
+            return;
           const next = readOverflowMessage(event.nativeEvent.data);
           if (next !== null) {
             setOverflow(next);

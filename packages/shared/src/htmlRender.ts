@@ -299,14 +299,13 @@ export async function handleHtmlRenderModelContextRequest(
 const MODEL_CONTEXT_SCRIPT = `(function(){
 var pending=null,queue=[],next=0,prefix="t3-context-"+Math.random().toString(36).slice(2)+"-";
 function complete(error){
-  var p=pending;pending=null;clearTimeout(p.timer);
+  var p=pending;pending=null;
   if(error)p.reject(error);else p.resolve();
   send();
 }
 function send(){
   if(pending||!queue.length)return;
   var p=pending=queue.shift();
-  p.timer=setTimeout(function(){complete(new Error("Context update timed out."));},10000);
   try{
     if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(p.message);
     else window.parent.postMessage(JSON.parse(p.message),"*");
