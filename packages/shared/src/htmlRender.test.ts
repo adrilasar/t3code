@@ -1,12 +1,11 @@
 import * as NodeVM from "node:vm";
 
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
-  readHtmlRenderModelContextRequest,
   handleHtmlRenderModelContextRequest,
   htmlRenderResult,
 } from "./htmlRender.ts";
@@ -139,101 +138,93 @@ describe("htmlRenderFromToolItem", () => {
 });
 
 describe("HTML render model context", () => {
-  it.each(["web", "mobile"])("acknowledges context writes over the %s bridge", async (platform) => {
-    const messages: unknown[] = [];
-    const listeners: Array<(event: { data: unknown; source: unknown }) => void> = [];
-    const postMessage = (data: unknown) => messages.push(data);
-    const parent = { postMessage };
-    const window = {
-      parent: platform === "web" ? parent : (null as unknown),
-      ReactNativeWebView: platform === "mobile" ? { postMessage } : undefined,
-      addEventListener: (
-        type: string,
-        listener: (event: { data: unknown; source: unknown }) => void,
-      ) => {
-        if (type === "message") listeners.push(listener);
-      },
-    };
-    if (platform === "mobile") window.parent = window;
-    const context = NodeVM.createContext({
-      window,
-      document: { getElementById: () => null },
-      TextEncoder,
-      setTimeout,
-      clearTimeout,
-    });
-    const html = injectHtmlRenderBootstrap("<input name=name>");
-    NodeVM.runInContext(/<script>([\s\S]*?)<\/script>/.exec(html)![1]!, context);
-    const reply = (data: unknown, source: unknown = window.parent) => {
-      for (const listener of listeners) listener({ data, source });
-    };
-    const respond = (message: unknown, saved = true) =>
-      handleHtmlRenderModelContextRequest(message, async () => saved, reply);
-    const sent = messages.length;
-    const first: Promise<void> = NodeVM.runInContext(
-      'window.t3.updateModelContext({value:"first"})',
-      context,
-    );
-    const firstRequest = readHtmlRenderModelContextRequest(messages.at(-1))!;
-    const second: Promise<void> = NodeVM.runInContext(
-      'window.t3.updateModelContext({value:"second"})',
-      context,
-    );
-    expect(messages).toHaveLength(sent + 1);
-    if (platform === "web") reply(htmlRenderResult(firstRequest.id, "forged"), {});
-    await respond(messages.at(-1));
-    await first;
-    const secondRequest = readHtmlRenderModelContextRequest(messages.at(-1))!;
-    expect(secondRequest.context).toEqual({ structuredContent: { value: "second" } });
-    await respond(messages.at(-1));
-    await second;
+  it.each(["web", "mobile"])(
+    "orders writes over %s and ignores stale replies",
+    async (platform) => {
+      const messages: unknown[] = [];
+      let receive!: (event: { data: unknown; source: unknown }) => void;
+      const window = {
+        parent: {} as unknown,
+        t3: {} as { updateModelContext: (state: unknown) => Promise<void> },
+        ReactNativeWebView:
+          platform === "mobile"
+            ? { postMessage: (data: string) => messages.push(data) }
+            : undefined,
+        addEventListener: (type: string, listener: typeof receive) => {
+          if (type === "message") receive = listener;
+        },
+      };
+      window.parent =
+        platform === "web" ? { postMessage: (data: unknown) => messages.push(data) } : window;
+      const script = /<script>([\s\S]*?)<\/script>/.exec(injectHtmlRenderBootstrap("<input>"))![1]!;
+      const boot = () =>
+        NodeVM.runInNewContext(script, {
+          window,
+          document: { getElementById: () => null },
+          TextEncoder,
+          setTimeout,
+        });
+      boot();
+      const update = vi.fn(async (_state: unknown) => true);
+      const reply = vi.fn((data: unknown) => receive({ data, source: window.parent }));
+      const respond = () => handleHtmlRenderModelContextRequest(messages.at(-1), update, reply);
+      const sent = messages.length;
+      const first = window.t3.updateModelContext({ value: "first" });
+      const state = { value: "second" };
+      const second = window.t3.updateModelContext(state);
+      state.value = "changed after enqueue";
+      expect(messages).toHaveLength(sent + 1);
+      if (platform === "web") {
+        update.mockResolvedValueOnce(false);
+        reply.mockImplementationOnce((data) => receive({ data, source: {} }));
+        await respond();
+      }
+      await respond();
+      await first;
+      await respond();
+      await second;
+      expect(update.mock.calls.slice(-2)).toEqual([
+        [{ structuredContent: { value: "first" } }],
+        [{ structuredContent: { value: "second" } }],
+      ]);
+      const oldId = (reply.mock.calls[0]![0] as { id: string }).id;
+      update.mockResolvedValueOnce(false);
+      const clear = window.t3.updateModelContext(null);
+      const rejected = expect(clear).rejects.toThrow("Context could not be saved");
+      await respond();
+      expect(update).toHaveBeenLastCalledWith({});
+      await rejected;
+      for (const state of [[], { value: "表".repeat(6000) }])
+        await expect(window.t3.updateModelContext(state)).rejects.toThrow();
+      boot();
+      const restarted = window.t3.updateModelContext({ value: "new document" });
+      reply(htmlRenderResult(oldId, "Reply from the old document"));
+      await respond();
+      await expect(restarted).resolves.toBeUndefined();
+    },
+  );
 
-    const clear: Promise<void> = NodeVM.runInContext("window.t3.updateModelContext(null)", context);
-    const cleared = readHtmlRenderModelContextRequest(messages.at(-1));
-    expect(cleared?.context).toEqual({});
-    const rejected = expect(clear).rejects.toThrow("Context could not be saved");
-    await respond(messages.at(-1), false);
-    await rejected;
-
-    const before = messages.length;
-    await expect(NodeVM.runInContext("window.t3.updateModelContext([])", context)).rejects.toThrow(
-      "object or null",
-    );
-    await expect(
-      NodeVM.runInContext('window.t3.updateModelContext({value:"表".repeat(6000)})', context),
-    ).rejects.toThrow("too large");
-    expect(messages).toHaveLength(before);
-
-    NodeVM.runInContext(/<script>([\s\S]*?)<\/script>/.exec(html)![1]!, context);
-    const restarted: Promise<void> = NodeVM.runInContext(
-      'window.t3.updateModelContext({value:"new document"})',
-      context,
-    );
-    const saved = expect(restarted).resolves.toBeUndefined();
-    reply(htmlRenderResult(firstRequest.id, "Reply from the old document"));
-    await respond(messages.at(-1));
-    await saved;
-  });
-
-  it("rejects malformed requests and accepts only explicit context updates", () => {
+  it("ignores malformed or unsupported messages without updating context", async () => {
+    const update = vi.fn(async () => true);
+    const reply = vi.fn();
     const request = (params: unknown) => ({
       jsonrpc: "2.0",
       id: 1,
       method: "ui/update-model-context",
       params,
     });
-    expect(
-      readHtmlRenderModelContextRequest(request({ structuredContent: { choices: ["a"] } })),
-    ).toEqual({
-      id: 1,
-      context: { structuredContent: { choices: ["a"] } },
-    });
-    for (const structuredContent of [null, [], "text"]) {
-      expect(readHtmlRenderModelContextRequest(request({ structuredContent }))).toBeUndefined();
-    }
-    expect(readHtmlRenderModelContextRequest(request({ content: "text" }))).toBeUndefined();
-    expect(
-      readHtmlRenderModelContextRequest({ ...request({}), method: "tools/call" }),
-    ).toBeUndefined();
+    for (const message of [
+      null,
+      "{",
+      {},
+      request(null),
+      request({ content: [] }),
+      ...[null, [], "text"].map((structuredContent) => request({ structuredContent })),
+      { ...request({}), id: undefined },
+      { ...request({}), method: "tools/call" },
+    ])
+      await handleHtmlRenderModelContextRequest(message, update, reply);
+    expect(update).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
   });
 });

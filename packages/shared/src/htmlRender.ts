@@ -247,53 +247,33 @@ export interface HtmlRenderModelContextTarget {
   >;
 }
 
-export function readHtmlRenderModelContextRequest(data: unknown) {
-  if (typeof data === "string") {
-    try {
-      data = JSON.parse(data);
-    } catch {
-      return undefined;
-    }
-  }
-  if (typeof data !== "object" || data === null) return undefined;
-  const { jsonrpc, method, id, params } = data as Record<string, unknown>;
-  if (jsonrpc !== "2.0" || method !== "ui/update-model-context") return undefined;
-  if (typeof id !== "string" && typeof id !== "number") return undefined;
-  if (typeof params !== "object" || params === null) return undefined;
-  const { content, structuredContent } = params as Record<string, unknown>;
-  if (content !== undefined && !Array.isArray(content)) return undefined;
-  if (
-    structuredContent !== undefined &&
-    (typeof structuredContent !== "object" ||
-      structuredContent === null ||
-      Array.isArray(structuredContent))
-  )
-    return undefined;
-  return {
-    id,
-    context: {
-      ...(content === undefined ? {} : { content }),
-      ...(structuredContent === undefined
-        ? {}
-        : { structuredContent: structuredContent as Record<string, unknown> }),
-    },
-  };
-}
-
-export type HtmlRenderModelContext = Pick<
-  McpAppUpdateModelContextInput,
-  "content" | "structuredContent"
->;
+export type HtmlRenderModelContext = Pick<McpAppUpdateModelContextInput, "structuredContent">;
 
 export async function handleHtmlRenderModelContextRequest(
   message: unknown,
   update: (context: HtmlRenderModelContext) => Promise<boolean>,
   reply: (response: ReturnType<typeof htmlRenderResult>) => void,
 ) {
-  const request = readHtmlRenderModelContextRequest(message);
-  if (request === undefined) return;
-  const saved = await update(request.context);
-  reply(htmlRenderResult(request.id, saved ? undefined : "Context could not be saved."));
+  if (typeof message === "string") {
+    try {
+      message = JSON.parse(message);
+    } catch {
+      return;
+    }
+  }
+  if (typeof message !== "object" || message === null) return;
+  const { jsonrpc, method, id, params } = message as Record<string, unknown>;
+  if (jsonrpc !== "2.0" || method !== "ui/update-model-context") return;
+  if (typeof id !== "string" && typeof id !== "number") return;
+  if (typeof params !== "object" || params === null || Array.isArray(params) || "content" in params)
+    return;
+  const state = (params as Record<string, unknown>).structuredContent;
+  if (state !== undefined && (typeof state !== "object" || state === null || Array.isArray(state)))
+    return;
+  const saved = await update(
+    state === undefined ? {} : { structuredContent: state as Record<string, unknown> },
+  );
+  reply(htmlRenderResult(id, saved ? undefined : "Context could not be saved."));
 }
 
 const MODEL_CONTEXT_SCRIPT = `(function(){

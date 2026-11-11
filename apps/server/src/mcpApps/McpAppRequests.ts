@@ -191,15 +191,12 @@ const make = Effect.gen(function* () {
     const item = yield* orchestrator
       .getTurnItem({ threadId: input.threadId, itemId: input.itemId })
       .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
-    const isHtmlRender =
-      item?.type === "dynamic_tool" && htmlRenderFromToolItem(item) !== undefined;
-    const app =
-      item?.type === "dynamic_tool"
-        ? isHtmlRender
-          ? { server: "t3-code", tool: "html_render" }
-          : item.providerThreadId !== null
-            ? mcpAppFromToolItem(item)
-            : undefined
+    if (item?.type !== "dynamic_tool") return yield* fail(input.threadId, "not-an-app");
+    const isHtmlRender = htmlRenderFromToolItem(item) !== undefined;
+    const app = isHtmlRender
+      ? { server: "t3-code", tool: "html_render" }
+      : item.providerThreadId !== null
+        ? mcpAppFromToolItem(item)
         : undefined;
     if (app === undefined) return yield* fail(input.threadId, "not-an-app");
     // Context belongs only to the app's thread or its descendants.

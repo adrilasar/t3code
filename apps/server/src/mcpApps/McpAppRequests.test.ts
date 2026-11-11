@@ -63,17 +63,24 @@ const app = {
   resourceUri: "ui://weather/dashboard",
 };
 
-const storedContext = new Map<string, string>();
+const htmlItem = {
+  ...appItem({ htmlRender: { attachmentId: app.attachmentId, title: "Form", height: 200 } }),
+  toolName: "html_render",
+  providerThreadId: null,
+};
+
+const pages = [appItem({ t3McpApp: app }), htmlItem];
+
+const storedContext = new Map<
+  string,
+  McpAppModelContext.McpAppModelContextEntry & { threadId: ThreadId }
+>();
 
 function makeLayer(input: {
   readonly item: OrchestrationV2TurnItem | null;
   readonly mcpApps?: ProviderAdapter.ProviderAdapterV2McpApps;
   readonly live?: boolean;
 }) {
-  const entries = new Map<
-    string,
-    McpAppModelContext.McpAppModelContextEntry & { threadId: ThreadId }
-  >();
   return McpAppRequests.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -83,18 +90,13 @@ function makeLayer(input: {
               Effect.andThen(
                 Effect.sync(() => {
                   const key = `${entry.threadId}/${entry.itemId}`;
-                  if (entry.text.trim() === "") {
-                    storedContext.delete(key);
-                    entries.delete(key);
-                  } else {
-                    storedContext.set(key, entry.text);
-                    entries.set(key, entry);
-                  }
+                  if (entry.text.trim() === "") storedContext.delete(key);
+                  else storedContext.set(key, entry);
                 }),
               ),
             ),
           forThread: (id) =>
-            Effect.sync(() => [...entries.values()].filter((entry) => entry.threadId === id)),
+            Effect.sync(() => [...storedContext.values()].filter((entry) => entry.threadId === id)),
         }),
         Layer.mock(Orchestrator.OrchestratorV2)({
           getTurnItem: () => Effect.succeed(input.item),
@@ -230,7 +232,7 @@ describe("McpAppRequests", () => {
     ),
   );
 
-  it.effect("keeps each app's latest model context, without a live session", () =>
+  it.effect.each(pages)("keeps context without a session", (item) =>
     Effect.gen(function* () {
       const requests = yield* McpAppRequests.McpAppRequests;
       const own = { threadId, itemId, conversationThreadId: threadId };
@@ -238,14 +240,14 @@ describe("McpAppRequests", () => {
         ...own,
         content: [{ type: "text", text: "  indented value  " }],
       });
-      assert.equal(storedContext.get(`${threadId}/${itemId}`), "  indented value  ");
+      assert.equal(storedContext.get(`${threadId}/${itemId}`)?.text, "  indented value  ");
       yield* requests.updateModelContext({
         ...own,
         content: [{ type: "text", text: "Filtered to overdue" }],
         structuredContent: { filter: "overdue" },
       });
       assert.equal(
-        storedContext.get(`${threadId}/${itemId}`),
+        storedContext.get(`${threadId}/${itemId}`)?.text,
         'Filtered to overdue\n{"filter":"overdue"}',
       );
       assert.equal(
@@ -265,47 +267,19 @@ describe("McpAppRequests", () => {
       );
       yield* requests.updateModelContext(own);
       assert.isFalse(storedContext.has(`${threadId}/${itemId}`));
-    }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), live: false }))),
-  );
-
-  it.effect("accepts HTML render context without granting MCP tool access", () =>
-    Effect.gen(function* () {
-      const requests = yield* McpAppRequests.McpAppRequests;
-      const own = { threadId, itemId, conversationThreadId: threadId };
-      yield* requests.updateModelContext({ ...own, structuredContent: { name: "Ada" } });
-      assert.equal(storedContext.get(`${threadId}/${itemId}`), '{"name":"Ada"}');
-      assert.equal(
-        yield* reason(requests.callTool({ threadId, itemId, name: "refresh", arguments: {} })),
-        "not-an-app",
-      );
-      yield* requests.updateModelContext(own);
-    }).pipe(
-      Effect.provide(
-        makeLayer({
-          item: {
-            ...appItem({
-              htmlRender: { attachmentId: app.attachmentId, title: "Form", height: 200 },
-            }),
-            toolName: "mcp__t3-code__html_render",
-            providerThreadId: null,
-          },
-          live: false,
-        }),
-      ),
-    ),
+    }).pipe(Effect.provide(makeLayer({ item, live: false }))),
   );
 
   it.effect("bounds combined HTML context across concurrent pages and frees space on clear", () =>
     Effect.gen(function* () {
       const requests = yield* McpAppRequests.McpAppRequests;
-      const ids = ["html-budget-1", "html-budget-2", "html-budget-3"].map((id) =>
-        TurnItemId.make(id),
-      );
+      const ids = [1, 2, 3].map((id) => TurnItemId.make(`html-budget-${id}`));
+      const own = { threadId, conversationThreadId: threadId };
+      const clear = (itemId: TurnItemId) => requests.updateModelContext({ ...own, itemId });
       const publish = (id: TurnItemId) =>
         requests.updateModelContext({
-          threadId,
+          ...own,
           itemId: id,
-          conversationThreadId: threadId,
           structuredContent: { value: "x".repeat(15000) },
         });
       const results = yield* Effect.forEach(ids, (id) => Effect.exit(publish(id)), {
@@ -314,32 +288,10 @@ describe("McpAppRequests", () => {
       assert.equal(results.filter((result) => result._tag === "Success").length, 2);
       const refused = ids.find((id) => !storedContext.has(`${threadId}/${id}`))!;
       const kept = ids.find((id) => storedContext.has(`${threadId}/${id}`))!;
-      yield* requests.updateModelContext({
-        threadId,
-        itemId: kept,
-        conversationThreadId: threadId,
-      });
+      yield* clear(kept);
       yield* publish(refused);
-      for (const id of ids)
-        yield* requests.updateModelContext({
-          threadId,
-          itemId: id,
-          conversationThreadId: threadId,
-        });
-    }).pipe(
-      Effect.provide(
-        makeLayer({
-          item: {
-            ...appItem({
-              htmlRender: { attachmentId: app.attachmentId, title: "Form", height: 200 },
-            }),
-            toolName: "html_render",
-            providerThreadId: null,
-          },
-          live: false,
-        }),
-      ),
-    ),
+      for (const id of ids) yield* clear(id);
+    }).pipe(Effect.provide(makeLayer({ item: htmlItem, live: false }))),
   );
 
   it.effect("stores a fork's model context under the fork, and refuses unrelated threads", () =>
@@ -352,7 +304,7 @@ describe("McpAppRequests", () => {
         conversationThreadId: forkId,
         content,
       });
-      assert.equal(storedContext.get(`${forkId}/${itemId}`), "Seen from the fork");
+      assert.equal(storedContext.get(`${forkId}/${itemId}`)?.text, "Seen from the fork");
       assert.isFalse(storedContext.has(`${threadId}/${itemId}`));
       assert.equal(
         yield* reason(
